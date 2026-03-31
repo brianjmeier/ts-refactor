@@ -7,7 +7,7 @@ allowed-tools: Read, Bash(bun:*), Bash(git:*), Bash(cat:*), Bash(ls:*), LSP
 
 Semantic refactoring powered by ts-morph. All operations understand the TypeScript AST — not string matching.
 
-**CLI location:** Update this path after install → `~/dev/ts-refactor/cli.ts`
+**CLI location:** `TS_REFACTOR_CLI` (set this to the absolute path to `src/cli.ts` after install)
 
 ## Discovery: Use the LSP First
 
@@ -42,21 +42,21 @@ Two ways to target a symbol:
 
 2. **Dry run.** Always preview before applying:
    ```bash
-   bun ~/dev/ts-refactor/cli.ts rename \
+   bun TS_REFACTOR_CLI rename \
      --file <path> --to <newName> (--symbol <name> | --line <n> [--col <n>]) \
      --dry-run --tsconfig <tsconfig-path>
    ```
 
 3. **Apply.** After the user confirms (or immediately if the scope is small — under 5 files):
    ```bash
-   bun ~/dev/ts-refactor/cli.ts rename \
+   bun TS_REFACTOR_CLI rename \
      --file <path> --to <newName> (--symbol <name> | --line <n> [--col <n>]) \
      --tsconfig <tsconfig-path>
    ```
 
 4. **Verify.** Run diagnostics to check for type errors:
    ```bash
-   bun ~/dev/ts-refactor/cli.ts diagnostics --tsconfig <tsconfig-path>
+   bun TS_REFACTOR_CLI diagnostics --tsconfig <tsconfig-path>
    ```
 
 5. **Commit.** Stage and commit the rename as a single atomic commit.
@@ -65,7 +65,7 @@ Two ways to target a symbol:
 
 1. **Dry run:**
    ```bash
-   bun ~/dev/ts-refactor/cli.ts move \
+   bun TS_REFACTOR_CLI move \
      --file <path> --to <newPath> --dry-run --tsconfig <tsconfig-path>
    ```
 
@@ -74,14 +74,14 @@ Two ways to target a symbol:
 ## Workflow: Find References
 
 ```bash
-bun ~/dev/ts-refactor/cli.ts references \
+bun TS_REFACTOR_CLI references \
   --file <path> (--symbol <name> | --line <n> [--col <n>]) --tsconfig <tsconfig-path>
 ```
 
 ## Workflow: Diagnostics
 
 ```bash
-bun ~/dev/ts-refactor/cli.ts diagnostics [--file <path>] --tsconfig <tsconfig-path>
+bun TS_REFACTOR_CLI diagnostics [--file <path>] --tsconfig <tsconfig-path>
 ```
 
 ## Rules

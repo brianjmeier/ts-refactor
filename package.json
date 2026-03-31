@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "ts-refactor": "./cli.ts"
+    "ts-refactor": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test"
   },
   "dependencies": {
     "ts-morph": "^25.0.0"
