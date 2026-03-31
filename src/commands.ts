@@ -1,4 +1,4 @@
-import { Node, ts } from "ts-morph";
+import { Node, type Project, type SourceFile, ts } from "ts-morph";
 import { resolveNode, isRenameable, isReferenceFindable } from "./resolve.ts";
 import {
   die,
@@ -8,49 +8,98 @@ import {
   relative,
   type Flags,
 } from "./utils.ts";
+import { strategyFromFlags, type RenameOp, type MoveOp } from "./strategy.ts";
+
+// ---------------------------------------------------------------------------
+// Analysis helpers — named, functional, reusable
+// ---------------------------------------------------------------------------
+
+function collectAffectedFiles(node: Node, sourceFile: SourceFile, cwd: string): string[] {
+  const files = new Set<string>();
+  if (Node.isReferenceFindable(node)) {
+    for (const ref of node.findReferencesAsNodes()) {
+      files.add(relative(ref.getSourceFile().getFilePath(), cwd));
+    }
+  }
+  files.add(relative(sourceFile.getFilePath(), cwd));
+  return [...files].sort();
+}
+
+function collectReferences(node: Node, cwd: string): { file: string; line: number }[] {
+  if (!Node.isReferenceFindable(node)) return [];
+  return node
+    .findReferences()
+    .flatMap((entry) =>
+      entry.getReferences().map((ref) => ({
+        file: relative(ref.getSourceFile().getFilePath(), cwd),
+        line: ref.getSourceFile().getLineAndColumnAtPos(
+          ref.getTextSpan().getStart(),
+        ).line,
+      })),
+    );
+}
+
+function collectReferencingFiles(project: Project, sourceFile: SourceFile, cwd: string): string[] {
+  const files = new Set<string>();
+  for (const sf of project.getSourceFiles()) {
+    const importsThis = sf
+      .getImportDeclarations()
+      .some((imp) => imp.getModuleSpecifierSourceFile() === sourceFile);
+    const exportsThis = sf
+      .getExportDeclarations()
+      .some((exp) => exp.getModuleSpecifierSourceFile() === sourceFile);
+    if (importsThis || exportsThis) {
+      files.add(relative(sf.getFilePath(), cwd));
+    }
+  }
+  return [...files].sort();
+}
+
+function groupReferencesByFile(
+  node: Node,
+  cwd: string,
+): { groups: Map<string, number[]>; total: number } {
+  const groups = new Map<string, number[]>();
+  let total = 0;
+  if (!Node.isReferenceFindable(node)) return { groups, total };
+
+  for (const entry of node.findReferences()) {
+    for (const ref of entry.getReferences()) {
+      const file = relative(ref.getSourceFile().getFilePath(), cwd);
+      const line = ref.getSourceFile().getLineAndColumnAtPos(
+        ref.getTextSpan().getStart(),
+      ).line;
+      if (!groups.has(file)) groups.set(file, []);
+      groups.get(file)!.push(line);
+      total++;
+    }
+  }
+  return { groups, total };
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
 
 export async function cmdRename(flags: Flags) {
   const newName = flags.to as string;
-  const dryRun = !!flags["dry-run"];
   if (!newName) die("--to is required");
 
   const { project, sourceFile } = loadSourceFile(flags);
   const node = resolveNode(sourceFile, flags, isRenameable, "renameable");
   const oldName = nodeName(node);
   const cwd = process.cwd();
+  const strategy = strategyFromFlags(!!flags["dry-run"]);
 
-  const affectedFiles = new Set<string>();
-  if (Node.isReferenceFindable(node)) {
-    for (const ref of node.findReferencesAsNodes()) {
-      affectedFiles.add(relative(ref.getSourceFile().getFilePath(), cwd));
-    }
-  }
-  affectedFiles.add(relative(sourceFile.getFilePath(), cwd));
+  const op: RenameOp = {
+    type: "rename",
+    oldName,
+    newName,
+    affectedFiles: collectAffectedFiles(node, sourceFile, cwd),
+    references: collectReferences(node, cwd),
+  };
 
-  if (dryRun) {
-    console.log(`Dry run: rename "${oldName}" → "${newName}"`);
-    console.log(`\nAffected files (${affectedFiles.size}):`);
-    for (const f of [...affectedFiles].sort()) console.log(`  ${f}`);
-    if (Node.isReferenceFindable(node)) {
-      console.log("\nReferences:");
-      for (const entry of node.findReferences()) {
-        for (const ref of entry.getReferences()) {
-          const refFile = relative(ref.getSourceFile().getFilePath(), cwd);
-          const pos = ref.getTextSpan().getStart();
-          const lineNum = ref.getSourceFile().getLineAndColumnAtPos(pos).line;
-          console.log(`  ${refFile}:${lineNum}`);
-        }
-      }
-    }
-    return;
-  }
-
-  node.rename(newName);
-  await project.save();
-
-  console.log(`Renamed "${oldName}" → "${newName}"`);
-  console.log(`\nUpdated files (${affectedFiles.size}):`);
-  for (const f of [...affectedFiles].sort()) console.log(`  ${f}`);
+  await strategy.execute(op, () => node.rename(newName), project);
 }
 
 export function cmdReferences(flags: Flags) {
@@ -63,23 +112,10 @@ export function cmdReferences(flags: Flags) {
   );
   const name = nodeName(node);
   const cwd = process.cwd();
-
-  let total = 0;
-  const fileGroups = new Map<string, number[]>();
-
-  for (const entry of node.findReferences()) {
-    for (const ref of entry.getReferences()) {
-      const refFile = relative(ref.getSourceFile().getFilePath(), cwd);
-      const pos = ref.getTextSpan().getStart();
-      const lineNum = ref.getSourceFile().getLineAndColumnAtPos(pos).line;
-      if (!fileGroups.has(refFile)) fileGroups.set(refFile, []);
-      fileGroups.get(refFile)!.push(lineNum);
-      total++;
-    }
-  }
+  const { groups, total } = groupReferencesByFile(node, cwd);
 
   console.log(`References for "${name}" (${total} total):\n`);
-  for (const [f, lines] of [...fileGroups.entries()].sort()) {
+  for (const [f, lines] of [...groups.entries()].sort()) {
     console.log(`  ${f}`);
     for (const line of lines) console.log(`    :${line}`);
   }
@@ -87,40 +123,20 @@ export function cmdReferences(flags: Flags) {
 
 export async function cmdMove(flags: Flags) {
   const toPath = flags.to as string;
-  const dryRun = !!flags["dry-run"];
   if (!toPath) die("--to is required");
 
   const { project, sourceFile } = loadSourceFile(flags);
   const cwd = process.cwd();
+  const strategy = strategyFromFlags(!!flags["dry-run"]);
 
-  if (dryRun) {
-    const referencingFiles = new Set<string>();
-    for (const sf of project.getSourceFiles()) {
-      for (const imp of sf.getImportDeclarations()) {
-        if (imp.getModuleSpecifierSourceFile() === sourceFile) {
-          referencingFiles.add(relative(sf.getFilePath(), cwd));
-        }
-      }
-      for (const exp of sf.getExportDeclarations()) {
-        if (exp.getModuleSpecifierSourceFile() === sourceFile) {
-          referencingFiles.add(relative(sf.getFilePath(), cwd));
-        }
-      }
-    }
+  const op: MoveOp = {
+    type: "move",
+    fromPath: relative(sourceFile.getFilePath(), cwd),
+    toPath,
+    referencingFiles: collectReferencingFiles(project, sourceFile, cwd),
+  };
 
-    console.log(
-      `Dry run: move "${relative(sourceFile.getFilePath(), cwd)}" → "${toPath}"`,
-    );
-    console.log(`\nFiles with imports to update (${referencingFiles.size}):`);
-    for (const f of [...referencingFiles].sort()) console.log(`  ${f}`);
-    return;
-  }
-
-  sourceFile.move(toPath);
-  await project.save();
-
-  console.log(`Moved "${flags.file}" → "${toPath}"`);
-  console.log("All import/export paths updated.");
+  await strategy.execute(op, () => sourceFile.move(toPath), project);
 }
 
 export function cmdDiagnostics(flags: Flags) {
@@ -139,8 +155,7 @@ export function cmdDiagnostics(flags: Flags) {
     return;
   }
 
-  console.log(`Found ${diagnostics.length} diagnostic(s):\n`);
-  for (const d of diagnostics) {
+  const formatDiagnostic = (d: (typeof diagnostics)[number]) => {
     const sf = d.getSourceFile();
     const filePath = sf ? relative(sf.getFilePath(), cwd) : "<unknown>";
     const line = d.getLineNumber() ?? "?";
@@ -149,13 +164,15 @@ export function cmdDiagnostics(flags: Flags) {
       typeof msg === "string"
         ? msg
         : ts.flattenDiagnosticMessageText(msg.compilerObject, "\n");
-    const category = d.getCategory();
     const label =
-      category === ts.DiagnosticCategory.Error
+      d.getCategory() === ts.DiagnosticCategory.Error
         ? "error"
-        : category === ts.DiagnosticCategory.Warning
+        : d.getCategory() === ts.DiagnosticCategory.Warning
           ? "warning"
           : "info";
-    console.log(`  ${filePath}:${line} [${label}] ${msgStr}`);
-  }
+    return `  ${filePath}:${line} [${label}] ${msgStr}`;
+  };
+
+  console.log(`Found ${diagnostics.length} diagnostic(s):\n`);
+  diagnostics.forEach((d) => console.log(formatDiagnostic(d)));
 }
