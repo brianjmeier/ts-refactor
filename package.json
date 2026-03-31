@@ -1,0 +1,11 @@
+{
+  "name": "ts-refactor",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "ts-refactor": "./cli.ts"
+  },
+  "dependencies": {
+    "ts-morph": "^25.0.0"
+  }
+}
