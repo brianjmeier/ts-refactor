@@ -1,7 +1,8 @@
-import { Node, type Project, type SourceFile, ts } from "ts-morph";
+import { Node, type Project, type SourceFile } from "ts-morph";
 import { resolveNode, isRenameable, isReferenceFindable } from "./resolve.ts";
 import {
   die,
+  formatDiagnostic,
   loadProject,
   loadSourceFile,
   nodeName,
@@ -155,24 +156,8 @@ export function cmdDiagnostics(flags: Flags) {
     return;
   }
 
-  const formatDiagnostic = (d: (typeof diagnostics)[number]) => {
-    const sf = d.getSourceFile();
-    const filePath = sf ? relative(sf.getFilePath(), cwd) : "<unknown>";
-    const line = d.getLineNumber() ?? "?";
-    const msg = d.getMessageText();
-    const msgStr =
-      typeof msg === "string"
-        ? msg
-        : ts.flattenDiagnosticMessageText(msg.compilerObject, "\n");
-    const label =
-      d.getCategory() === ts.DiagnosticCategory.Error
-        ? "error"
-        : d.getCategory() === ts.DiagnosticCategory.Warning
-          ? "warning"
-          : "info";
-    return `  ${filePath}:${line} [${label}] ${msgStr}`;
-  };
-
   console.log(`Found ${diagnostics.length} diagnostic(s):\n`);
-  diagnostics.forEach((d) => console.log(formatDiagnostic(d)));
+  diagnostics
+    .map((d) => formatDiagnostic(d, cwd))
+    .forEach((line) => console.log(line));
 }

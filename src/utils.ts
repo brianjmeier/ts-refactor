@@ -1,4 +1,4 @@
-import { Node, Project, type SourceFile } from "ts-morph";
+import { Node, Project, type Diagnostic, type SourceFile, ts } from "ts-morph";
 
 export type Flags = Record<string, string | boolean>;
 
@@ -63,4 +63,26 @@ export function nodeName(node: Node): string {
 
 export function relative(filePath: string, cwd: string): string {
   return filePath.startsWith(cwd) ? filePath.slice(cwd.length + 1) : filePath;
+}
+
+const CATEGORY_LABELS: Record<number, string> = {
+  [ts.DiagnosticCategory.Error]: "error",
+  [ts.DiagnosticCategory.Warning]: "warning",
+  [ts.DiagnosticCategory.Message]: "info",
+  [ts.DiagnosticCategory.Suggestion]: "info",
+};
+
+function diagnosticMessage(d: Diagnostic): string {
+  const msg = d.getMessageText();
+  return typeof msg === "string"
+    ? msg
+    : ts.flattenDiagnosticMessageText(msg.compilerObject, "\n");
+}
+
+export function formatDiagnostic(d: Diagnostic, cwd: string): string {
+  const file = d.getSourceFile();
+  const path = file ? relative(file.getFilePath(), cwd) : "<unknown>";
+  const line = d.getLineNumber() ?? "?";
+  const label = CATEGORY_LABELS[d.getCategory()] ?? "info";
+  return `  ${path}:${line} [${label}] ${diagnosticMessage(d)}`;
 }
