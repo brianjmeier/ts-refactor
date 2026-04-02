@@ -11,9 +11,12 @@ function findByName(
 ) {
   for (const node of sourceFile.getDescendants()) {
     if (!matches(node)) continue;
-    if (!Node.isNamed(node) && !Node.isNameable(node)) continue;
     try {
-      if (node.getName() === name) return node;
+      if (Node.isNamed(node) || Node.isNameable(node)) {
+        if (node.getName() === name) return node;
+      } else if ("getName" in node && typeof (node as any).getName === "function") {
+        if ((node as any).getName() === name) return node;
+      }
     } catch {
       // Some nodes throw on getName() — skip.
     }
