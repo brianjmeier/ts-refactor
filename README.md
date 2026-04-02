@@ -156,11 +156,29 @@ bun src/cli.ts diag --file src/auth.ts
 
 When `--line` is used without `--col`, targets the first declaration on that line.
 
+## Monorepo Support
+
+`--tsconfig` accepts comma-separated paths or glob patterns to load source files from multiple packages at once:
+
+```bash
+# Two explicit tsconfigs
+bun src/cli.ts rename --file packages/db/src/schema.ts --symbol User --to Account \
+  --tsconfig packages/db/tsconfig.json,apps/api/tsconfig.json
+
+# Glob pattern — loads all matching tsconfigs
+bun src/cli.ts rename --file packages/db/src/schema.ts --symbol User --to Account \
+  --tsconfig "packages/*/tsconfig.json"
+```
+
+When multiple tsconfigs are provided, the first is primary (sets compiler options) and the rest contribute source files. This ensures cross-package references are renamed correctly.
+
+**Bun workspace path discovery:** In Bun monorepos, `@scope/pkg` imports don't use physical `node_modules` symlinks — ts-morph can't follow them without explicit `paths` mappings. ts-refactor auto-discovers workspace packages from your root `package.json` and injects the mappings so cross-package refactors resolve correctly.
+
 ## Global Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--tsconfig <path>` | `./tsconfig.json` | Path to tsconfig |
+| `--tsconfig <path>` | `./tsconfig.json` | Path, glob pattern, or comma-separated list of tsconfig paths |
 | `--dry-run` | off | Preview changes without writing |
 
 ## Tests
@@ -176,11 +194,18 @@ Built on [ts-morph](https://github.com/dsherret/ts-morph), which wraps the TypeS
 ## Project Structure
 
 ```
-src/cli.ts                      # CLI entry point
-skills/claude-code/ts-refactor.md   # Claude Code skill (slash command)
-skills/opencode/ts-refactor.md      # OpenCode skill (slash command)
-test/cli.test.ts                # Integration tests
-test/fixtures/                  # Test fixtures (sample TS project)
+src/
+  cli.ts          # Entry point — parses args, dispatches commands
+  commands.ts     # Command implementations (rename, references, move, diagnostics)
+  resolve.ts      # Symbol resolution by name or line/column position
+  strategy.ts     # Dry-run vs apply strategy pattern
+  utils.ts        # Project loading, workspace path discovery, formatting helpers
+skills/
+  claude-code/ts-refactor.md   # Claude Code skill (slash command)
+  opencode/ts-refactor.md      # OpenCode skill (slash command)
+test/
+  cli.test.ts     # Integration tests (all commands, multi-tsconfig, error cases)
+  fixtures/       # Sample TypeScript project used as test fixtures
 ```
 
 ## License

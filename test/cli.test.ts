@@ -201,4 +201,81 @@ describe("ts-refactor", () => {
       expect(fileOut).toContain("No diagnostics found");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Multi-tsconfig (monorepo support)
+  // -------------------------------------------------------------------------
+
+  describe("multi-tsconfig", () => {
+    // Set up a minimal two-package workspace in WORK:
+    //   packages/core/src/types.ts   — exports CoreModel
+    //   packages/app/src/index.ts    — imports CoreModel from @repo/core
+    //   packages/core/tsconfig.json
+    //   packages/app/tsconfig.json
+    //   package.json                 — declares workspaces: ["packages/*"]
+    beforeEach(() => {
+      mkdirSync(join(WORK, "packages/core/src"), { recursive: true });
+      mkdirSync(join(WORK, "packages/app/src"), { recursive: true });
+
+      writeFileSync(
+        join(WORK, "packages/core/src/types.ts"),
+        "export interface CoreModel { id: string; }\n",
+      );
+      writeFileSync(
+        join(WORK, "packages/app/src/index.ts"),
+        'import type { CoreModel } from "@repo/core";\nexport function use(m: CoreModel) { return m.id; }\n',
+      );
+
+      const sharedTsconfig = JSON.stringify({
+        compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "bundler", strict: true },
+      });
+      writeFileSync(join(WORK, "packages/core/tsconfig.json"), sharedTsconfig);
+      writeFileSync(join(WORK, "packages/app/tsconfig.json"), sharedTsconfig);
+
+      writeFileSync(
+        join(WORK, "package.json"),
+        JSON.stringify({
+          name: "repo",
+          workspaces: ["packages/*"],
+          private: true,
+        }),
+      );
+      writeFileSync(
+        join(WORK, "packages/core/package.json"),
+        JSON.stringify({ name: "@repo/core", main: "src/types.ts" }),
+      );
+      writeFileSync(
+        join(WORK, "packages/app/package.json"),
+        JSON.stringify({ name: "@repo/app", main: "src/index.ts" }),
+      );
+    });
+
+    test("comma-separated tsconfigs: renames symbol across both packages", async () => {
+      const tsconfigs = `${WORK}/packages/core/tsconfig.json,${WORK}/packages/app/tsconfig.json`;
+      await $`bun ${CLI} rename --file packages/core/src/types.ts --symbol CoreModel --to DomainModel --tsconfig ${tsconfigs}`
+        .cwd(WORK)
+        .text();
+
+      const core = readFileSync(join(WORK, "packages/core/src/types.ts"), "utf-8");
+      expect(core).toContain("DomainModel");
+      expect(core).not.toContain("CoreModel");
+    });
+
+    test("glob tsconfig pattern: discovers tsconfigs automatically", async () => {
+      const globPattern = `${WORK}/packages/*/tsconfig.json`;
+      await $`bun ${CLI} rename --file packages/core/src/types.ts --symbol CoreModel --to DomainModel --tsconfig ${globPattern}`
+        .cwd(WORK)
+        .text();
+
+      const core = readFileSync(join(WORK, "packages/core/src/types.ts"), "utf-8");
+      expect(core).toContain("DomainModel");
+    });
+
+    test("nonexistent tsconfig exits with error", async () => {
+      const proc = await $`bun ${CLI} rename --file packages/core/src/types.ts --symbol CoreModel --to X --tsconfig ${WORK}/does-not-exist/tsconfig.json`
+        .cwd(WORK)
+        .nothrow();
+      expect(proc.exitCode).not.toBe(0);
+    });
+  });
 });
