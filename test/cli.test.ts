@@ -106,6 +106,15 @@ describe("ts-refactor", () => {
       expect(sample).toContain("return amount * multiplier");
     });
 
+    test("renames exported const (VariableDeclaration) by name", async () => {
+      // VariableDeclaration nodes have getName() but don't satisfy Node.isNamed/isNameable —
+      // this exercises the fallback branch in findByName that was previously missing.
+      await run("rename --file sample.ts --symbol DEFAULT_COUNT --to DEFAULT_AMOUNT");
+      const sample = readWork("sample.ts");
+      expect(sample).toContain("DEFAULT_AMOUNT");
+      expect(sample).not.toContain("DEFAULT_COUNT");
+    });
+
     test("errors on missing --to flag", async () => {
       const proc = $`bun ${CLI} rename --file sample.ts --symbol UserProfile --tsconfig ${WORK}/tsconfig.json`
         .cwd(WORK)
